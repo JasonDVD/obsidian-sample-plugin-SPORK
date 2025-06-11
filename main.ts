@@ -1,134 +1,156 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { createServer, IncomingMessage, ServerResponse, Server } from 'http';
+import { App, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
 
-// Remember to rename these classes and interfaces!
-
-interface MyPluginSettings {
-	mySetting: string;
+interface VoicePluginSettings {
+    serverPort: number;
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
+const DEFAULT_SETTINGS: VoicePluginSettings = {
+    serverPort: 27123,
+};
+
+export default class HAVoicePlugin extends Plugin {
+    settings: VoicePluginSettings;
+    server: Server | null = null;
+
+    async onload() {
+        await this.loadSettings();
+        await this.startServer();
+        this.addSettingTab(new HAVoiceSettingTab(this.app, this));
+    }
+
+    onunload() {
+        if (this.server) {
+            this.server.close();
+        }
+    }
+
+    async loadSettings() {
+        this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    }
+
+    async saveSettings() {
+        await this.saveData(this.settings);
+    }
+
+    async startServer() {
+        this.server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+            if (req.method === 'POST' && req.url === '/command') {
+                const chunks: Buffer[] = [];
+                for await (const chunk of req) chunks.push(chunk as Buffer);
+                try {
+                    const body = JSON.parse(Buffer.concat(chunks).toString());
+                    const text = body?.text || '';
+                    const result = await this.handleCommand(text);
+                    res.setHeader('Content-Type', 'application/json');
+                    res.write(JSON.stringify({ result }));
+                } catch (e) {
+                    res.statusCode = 400;
+                    res.write(JSON.stringify({ error: 'bad request' }));
+                }
+                res.end();
+                return;
+            }
+            res.statusCode = 404;
+            res.end();
+        }).listen(this.settings.serverPort, () => {
+            console.log(`HA Voice Plugin server listening on ${this.settings.serverPort}`);
+        });
+    }
+
+    async handleCommand(text: string): Promise<string> {
+        const lower = text.toLowerCase().trim();
+        if (lower.startsWith('create note ')) {
+            const title = text.substring('create note '.length).trim();
+            await this.createNote(title);
+            return `created note ${title}`;
+        }
+        if (lower.startsWith('append to ')) {
+            const match = text.match(/^append to (.+?):\s*(.+)$/i);
+            if (match) {
+                const file = match[1];
+                const content = match[2];
+                await this.appendTo(file, content);
+                return `appended to ${file}`;
+            }
+        }
+        if (lower.startsWith('read note ')) {
+            const title = text.substring('read note '.length).trim();
+            const content = await this.readNote(title);
+            return content ?? 'note not found';
+        }
+        if (lower === 'list notes') {
+            const files = this.app.vault.getMarkdownFiles().map(f => f.basename);
+            return files.join(', ');
+        }
+        if (lower.startsWith('search for ')) {
+            const term = text.substring('search for '.length).trim();
+            const matches = await this.searchNotes(term);
+            return matches.join(', ');
+        }
+        return 'unknown command';
+    }
+
+    async getFileByName(name: string): Promise<TFile | null> {
+        const file = this.app.vault.getMarkdownFiles().find(f => f.basename === name);
+        return file ?? null;
+    }
+
+    async createNote(name: string) {
+        const existing = await this.getFileByName(name);
+        if (existing) return;
+        await this.app.vault.create(`${name}.md`, '');
+    }
+
+    async appendTo(name: string, text: string) {
+        const file = await this.getFileByName(name);
+        if (!file) return;
+        await this.app.vault.append(file, `\n${text}`);
+    }
+
+    async readNote(name: string): Promise<string | null> {
+        const file = await this.getFileByName(name);
+        if (!file) return null;
+        return await this.app.vault.read(file);
+    }
+
+    async searchNotes(term: string): Promise<string[]> {
+        const files = this.app.vault.getMarkdownFiles();
+        const results: string[] = [];
+        for (const file of files) {
+            const content = await this.app.vault.read(file);
+            if (content.toLowerCase().includes(term.toLowerCase())) {
+                results.push(file.basename);
+            }
+        }
+        return results;
+    }
 }
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+class HAVoiceSettingTab extends PluginSettingTab {
+    plugin: HAVoicePlugin;
 
-	async onload() {
-		await this.loadSettings();
+    constructor(app: App, plugin: HAVoicePlugin) {
+        super(app, plugin);
+        this.plugin = plugin;
+    }
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
+    display(): void {
+        const { containerEl } = this;
+        containerEl.empty();
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
-
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-			}
-		});
-
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
-	}
-
-	onunload() {
-
-	}
-
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-	}
-
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
-}
-
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
-
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
-
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
-}
-
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
-
-	constructor(app: App, plugin: MyPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
-
-	display(): void {
-		const {containerEl} = this;
-
-		containerEl.empty();
-
-		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
-				}));
-	}
+        new Setting(containerEl)
+            .setName('Server Port')
+            .setDesc('Port for the HTTP server')
+            .addText(text => text
+                .setPlaceholder('27123')
+                .setValue(String(this.plugin.settings.serverPort))
+                .onChange(async (value) => {
+                    const num = parseInt(value, 10);
+                    if (!Number.isNaN(num)) {
+                        this.plugin.settings.serverPort = num;
+                        await this.plugin.saveSettings();
+                    }
+                }));
+    }
 }
