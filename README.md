@@ -18,11 +18,12 @@ The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definiti
 - Clone this repo.
 - Make sure your NodeJS is at least v16 (`node --version`).
 - `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
+- `npm run build` to compile the plugin and generate `main.js`.
+- `npm run dev` to start compilation in watch mode while developing.
 
 ## Manually installing the plugin
 
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
+- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/ha-voice-plugin/`.
 
 ## Improve code quality with eslint (optional)
 - [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
