@@ -1,6 +1,14 @@
-# Obsidian Sample Plugin
+# Home Assistant Voice Plugin
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+This plugin exposes a small HTTP API so you can control your vault from the Home Assistant voice assistant.
+
+POST `/command` expects JSON with a `text` field. Some example phrases:
+
+- `create note shopping`
+- `append to shopping: buy milk`
+- `read note shopping`
+- `list notes`
+- `search for project`
 
 This project uses TypeScript to provide type checking and documentation.
 The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
